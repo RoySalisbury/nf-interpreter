@@ -306,6 +306,19 @@ else()
 endif()
 
 #################################################################
+# enables configuration block storage support
+# (default is OFF so Configuration block storage is NOT supported)
+option(NF_FEATURE_HAS_CONFIG_BLOCK "option to enable configuration block storage")
+
+if(NF_FEATURE_HAS_CONFIG_BLOCK)
+    set(TARGET_HAS_CONFIG_BLOCK TRUE CACHE INTERNAL "Option for config block")
+    message(STATUS "Configuration block storage is included")
+else()
+    set(TARGET_HAS_CONFIG_BLOCK FALSE CACHE INTERNAL "Option for config block")
+    message(STATUS "Configuration block storage IS NOT included")
+endif()
+
+#################################################################
 
 if(RTOS_CHIBIOS_CHECK)
 

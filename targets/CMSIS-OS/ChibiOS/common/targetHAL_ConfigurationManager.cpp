@@ -20,28 +20,36 @@ __nfweak void ConfigurationManager_Initialize()
 // it's implemented with 'weak' attribute so it can be replaced at target level if a different persistance mechanism is used
 __nfweak void ConfigurationManager_EnumerateConfigurationBlocks()
 {
-    // find network configuration blocks
-    HAL_CONFIGURATION_NETWORK* networkConfigs = (HAL_CONFIGURATION_NETWORK*)ConfigurationManager_FindNetworkConfigurationBlocks((uint32_t)&__nanoConfig_start__, (uint32_t)&__nanoConfig_end__);
+    // start checking if this device has config block
+    if(((uint32_t)&__nanoConfig_end__ - (uint32_t)&__nanoConfig_start__) > 0)
+    {
+        // find network configuration blocks
+        HAL_CONFIGURATION_NETWORK* networkConfigs = (HAL_CONFIGURATION_NETWORK*)ConfigurationManager_FindNetworkConfigurationBlocks((uint32_t)&__nanoConfig_start__, (uint32_t)&__nanoConfig_end__);
 
-    // find wireless 80211 network configuration blocks
-    HAL_CONFIGURATION_NETWORK_WIRELESS80211* networkWirelessConfigs = (HAL_CONFIGURATION_NETWORK_WIRELESS80211*)ConfigurationManager_FindNetworkWireless80211ConfigurationBlocks((uint32_t)&__nanoConfig_start__, (uint32_t)&__nanoConfig_end__);
+        // find wireless 80211 network configuration blocks
+        HAL_CONFIGURATION_NETWORK_WIRELESS80211* networkWirelessConfigs = (HAL_CONFIGURATION_NETWORK_WIRELESS80211*)ConfigurationManager_FindNetworkWireless80211ConfigurationBlocks((uint32_t)&__nanoConfig_start__, (uint32_t)&__nanoConfig_end__);
 
-    // alloc memory for g_TargetConfiguration
-    // because this is a struct of structs that use flexible members the memory has to be allocated from the heap
-    // the malloc size for each struct is computed separately 
-    uint32_t sizeOfNetworkInterfaceConfigs = offsetof(HAL_CONFIGURATION_NETWORK, Configs) + networkConfigs->Count * sizeof(networkConfigs->Configs[0]);
-    uint32_t sizeOfWireless80211Configs = offsetof(HAL_CONFIGURATION_NETWORK_WIRELESS80211, Configs) + networkWirelessConfigs->Count * sizeof(networkWirelessConfigs->Configs[0]);
+        // alloc memory for g_TargetConfiguration
+        // because this is a struct of structs that use flexible members the memory has to be allocated from the heap
+        // the malloc size for each struct is computed separately 
+        uint32_t sizeOfNetworkInterfaceConfigs = offsetof(HAL_CONFIGURATION_NETWORK, Configs) + networkConfigs->Count * sizeof(networkConfigs->Configs[0]);
+        uint32_t sizeOfWireless80211Configs = offsetof(HAL_CONFIGURATION_NETWORK_WIRELESS80211, Configs) + networkWirelessConfigs->Count * sizeof(networkWirelessConfigs->Configs[0]);
 
-    g_TargetConfiguration.NetworkInterfaceConfigs = (HAL_CONFIGURATION_NETWORK*)platform_malloc(sizeOfNetworkInterfaceConfigs);
-    g_TargetConfiguration.Wireless80211Configs = (HAL_CONFIGURATION_NETWORK_WIRELESS80211*)platform_malloc(sizeOfWireless80211Configs);
+        g_TargetConfiguration.NetworkInterfaceConfigs = (HAL_CONFIGURATION_NETWORK*)platform_malloc(sizeOfNetworkInterfaceConfigs);
+        g_TargetConfiguration.Wireless80211Configs = (HAL_CONFIGURATION_NETWORK_WIRELESS80211*)platform_malloc(sizeOfWireless80211Configs);
 
-    // copy structs to g_TargetConfiguration
-    memcpy((HAL_CONFIGURATION_NETWORK*)g_TargetConfiguration.NetworkInterfaceConfigs, networkConfigs, sizeOfNetworkInterfaceConfigs);
-    memcpy((HAL_CONFIGURATION_NETWORK_WIRELESS80211*)g_TargetConfiguration.Wireless80211Configs, networkWirelessConfigs, sizeOfWireless80211Configs);
+        // copy structs to g_TargetConfiguration
+        memcpy((HAL_CONFIGURATION_NETWORK*)g_TargetConfiguration.NetworkInterfaceConfigs, networkConfigs, sizeOfNetworkInterfaceConfigs);
+        memcpy((HAL_CONFIGURATION_NETWORK_WIRELESS80211*)g_TargetConfiguration.Wireless80211Configs, networkWirelessConfigs, sizeOfWireless80211Configs);
 
-    // // now free the memory of the original structs
-    platform_free(networkConfigs);
-    platform_free(networkWirelessConfigs);
+        // // now free the memory of the original structs
+        platform_free(networkConfigs);
+        platform_free(networkWirelessConfigs);
+    }
+    else
+    {
+        // no config block
+    }
 }
 
 // Gets the network configuration block from the configuration flash sector 
@@ -59,7 +67,10 @@ __nfweak bool ConfigurationManager_GetConfigurationBlock(void* configurationBloc
         if(g_TargetConfiguration.NetworkInterfaceConfigs->Count == 0)
         {
             // there is no network config block, init one with default settings
-            InitialiseNetworkDefaultConfig(NULL, 0);
+            if(!InitialiseNetworkDefaultConfig(NULL, 0))
+            {
+                return FALSE;
+            }
         }
         else
         {
@@ -108,10 +119,11 @@ __nfweak bool ConfigurationManager_StoreConfigurationBlock(void* configurationBl
 
     if(configuration == DeviceConfigurationOption_Network)
     {
-        if(g_TargetConfiguration.NetworkInterfaceConfigs->Count == 0 ||
+        if( g_TargetConfiguration.NetworkInterfaceConfigs->Count == 0 ||
             (configurationIndex + 1) > g_TargetConfiguration.NetworkInterfaceConfigs->Count)
         {
-            // there is no room for this block, fail the operation
+            // there is no room for this block, or there are no blocks stored at all
+            // failing the operation
             return FALSE;
         }
 
@@ -128,10 +140,11 @@ __nfweak bool ConfigurationManager_StoreConfigurationBlock(void* configurationBl
     }
     else if(configuration == DeviceConfigurationOption_Wireless80211Network)
     {
-        if(g_TargetConfiguration.Wireless80211Configs->Count == 0 ||
+        if( g_TargetConfiguration.Wireless80211Configs->Count == 0 ||
             (configurationIndex + 1) > g_TargetConfiguration.Wireless80211Configs->Count)
         {
-            // there is no room for this block, fail the operation
+            // there is no room for this block, or there are no blocks stored at all
+            // failing the operation
             return FALSE;
         }
 
@@ -273,22 +286,11 @@ __nfweak void InitialiseWirelessDefaultConfig(HAL_Configuration_Wireless80211 * 
 
 //  Default initialisation for Network interface config blocks
 // it's implemented with 'weak' attribute so it can be replaced at target level if different configurations are intended
-__nfweak void InitialiseNetworkDefaultConfig(HAL_Configuration_NetworkInterface * pconfig, uint32_t configurationIndex)
+__nfweak bool InitialiseNetworkDefaultConfig(HAL_Configuration_NetworkInterface * pconfig, uint32_t configurationIndex)
 {
     (void)pconfig;
     (void)configurationIndex;
 
-    HAL_Configuration_NetworkInterface config;
-
-    config.InterfaceType = NetworkInterfaceType_Ethernet;
-
-    // defaults to DHCP and DNS from DHCP
-    config.StartupAddressMode = AddressMode_DHCP;
-    config.AutomaticDNS = TRUE;
-
-    // store this to the 0 index block
-    ConfigurationManager_StoreConfigurationBlock(&config, DeviceConfigurationOption_Network, 0, 0);
-
-    // need to update the block count
-    g_TargetConfiguration.NetworkInterfaceConfigs->Count = 1;
+    // can't create a "default" network config because we are lacking definition of a MAC address
+    return FALSE;
 }

@@ -24,19 +24,20 @@
     - ps: Add-Content "$env:USERPROFILE\.git-credentials" "https://$($env:GitHubToken):x-oauth-basic@github.com`n"
     - git config --global user.email "%GitHubUserEmail%"
     - git config --global user.name "%GitHubUserName%"
+    - ps: "$headers = if($env:APPVEYOR_PULL_REQUEST_NUMBER){\n @{\n  \"Authorization\" = \"Basic $env:GitRestAuth\"\n  \"Content-type\" = \"application/json\"\n}\n\n$pr = Invoke-RestMethod -Uri \"https://api.github.com/repos/nanoframework/nf-interpreter/pulls/$env:APPVEYOR_PULL_REQUEST_NUMBER\" -Headers $headers  -Method GET\n\nif($pr.user.login -eq \"nfbot\" -and $pr.body -match \"\\[version update\\]\")\n{\n    # commit was from nfbot AND it's taged as a [version update]\n    # OK to skip AppVeyor build \n    \"Version update only. Skipping build.\" | Write-Host -BackgroundColor White -ForegroundColor Blue\n    Exit-AppveyorBuild\n} }\n"
 
   configuration:
     - MinSizeRel
 
   environment:
     APPVEYOR_SAVE_CACHE_ON_ERROR: true
-    GNU_GCC_TOOLCHAIN_PATH: 'C:\GNU_Tools_ARM_Embedded\7-2017-q4-major'
+    GNU_GCC_TOOLCHAIN_PATH: 'C:\GNU_Tools_ARM_Embedded'
     ESP32_TOOLCHAIN_PATH: 'C:\ESP32_Tools\1.22.0-80'
     NINJA_PATH: 'C:\mytools\ninja'
     HEX2DFU_PATH: 'C:\mytools\hex2dfu'
     ESP32_TOOLS_PATH: 'C:/ESP32_TOOLS'
-    ESP32_LIBS_PATH: '%ESP32_TOOLS_PATH%/libs-v3.0'
-    ESP32_IDF_PATH: '%ESP32_TOOLS_PATH%/esp-idf-v3.0'
+    ESP32_LIBS_PATH: '%ESP32_TOOLS_PATH%/libs-v3.1'
+    ESP32_IDF_PATH: '%ESP32_TOOLS_PATH%/esp-idf-v3.1'
     BOARD_NAME: ''
     BUILD_OPTIONS: ''
     NEEDS_DFU: 'False'
@@ -53,7 +54,7 @@
     matrix:
       - BOARD_NAME: 'STM32'
       - BOARD_NAME: 'ESP32_DEVKITC'
-        BUILD_OPTIONS: '-DTARGET_SERIES=ESP32 -DRTOS=FREERTOS -DNF_WP_IMPLEMENTS_CRC32=OFF -DNF_FEATURE_DEBUGGER=ON -DNF_FEATURE_RTC=ON -DAPI_Windows.Devices.Gpio=ON -DAPI_Windows.Devices.Spi=ON -DAPI_Windows.Devices.I2c=ON -DAPI_Windows.Devices.Pwm=ON -DAPI_Windows.Devices.SerialCommunication=ON -DAPI_Windows.Devices.Adc=ON -DAPI_System.Net=ON -DAPI_Windows.Devices.Wifi=ON -DNF_SECURITY_OPENSSL=ON -DAPI_Hardware.Esp32=ON'
+        BUILD_OPTIONS: '-DTARGET_SERIES=ESP32 -DRTOS=FREERTOS -DNF_WP_IMPLEMENTS_CRC32=OFF -DNF_FEATURE_DEBUGGER=ON -DNF_FEATURE_RTC=ON -DAPI_Windows.Devices.Gpio=ON -DAPI_Windows.Devices.Spi=ON -DAPI_Windows.Devices.I2c=ON -DAPI_Windows.Devices.Pwm=ON -DAPI_Windows.Devices.SerialCommunication=ON -DAPI_Windows.Devices.Adc=ON -DAPI_System.Net=ON -DAPI_Windows.Devices.Wifi=ON -DNF_SECURITY_OPENSSL=ON -DAPI_Hardware.Esp32=ON -DSUPPORT_ANY_BASE_CONVERSION=ON'
 
   matrix:
     fast_finish: true
@@ -161,13 +162,22 @@
 
             Copy-Item -Path $env:ESP32_LIBS_PATH\bootloader.bin -Destination bootloader.bin
             Compress-7Zip -Path . -Filter "*.bin" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion
+            Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
 
             #upload package only if this not a PR
             if(!$env:APPVEYOR_PULL_REQUEST_NUMBER)
             {
-              $webClient = New-Object System.Net.WebClient
-              $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-              $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+              try
+              {
+                $webClient = New-Object System.Net.WebClient
+                $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+              }
+              catch
+              {
+                & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1" "warning" "$env:APPVEYOR_DISCORD_WEBHOOK_URL" "Failed to upload package for $env:BOARD_NAME."
+              }
+
             }
           }
           Else
@@ -191,13 +201,22 @@
               {
                 Compress-7Zip -Path . -Filter "*.dfu" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion -Append
               }
+              Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
 
               #upload package only if this not a PR
               if(!$env:APPVEYOR_PULL_REQUEST_NUMBER)
               {
-                $webClient = New-Object System.Net.WebClient
-                $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-                $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                try
+                {
+                  $webClient = New-Object System.Net.WebClient
+                  $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                  $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                }
+                catch
+                {
+                  & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+                }
+
               }
             }
             else
@@ -237,13 +256,21 @@
                 {
                   Compress-7Zip -Path . -Filter "*.dfu" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion -Append
                 }
-                
+                Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
+
                 #upload package only if this not a PR
                 if(!$env:APPVEYOR_PULL_REQUEST_NUMBER)
                 {
-                  $webClient = New-Object System.Net.WebClient
-                  $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-                  $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                  try
+                  {
+                    $webClient = New-Object System.Net.WebClient
+                    $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                    $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                  }
+                  catch
+                  {
+                    & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+                  }
                 }
 
                 cd ..
@@ -254,19 +281,12 @@
             }            
           }          
         }
+
   # requires APPVEYOR_DISCORD_WEBHOOK_URL enviroment variable set with Discord webhook URL
   on_failure:
-  - ps: |
-
-        cd ..
-
-        .\appveyor-discord.ps1 failure $env:APPVEYOR_DISCORD_WEBHOOK_URL
+  - ps: $env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 failure $env:APPVEYOR_DISCORD_WEBHOOK_URL
 
   test: off
-
-  artifacts:
-    - path: '**\*.zip'
-      name: nanoImage
 
   # before_deploy:
   #   # need this to keep ruby happy
@@ -311,19 +331,20 @@
     - ps: Add-Content "$env:USERPROFILE\.git-credentials" "https://$($env:GitHubToken):x-oauth-basic@github.com`n"
     - git config --global user.email "%GitHubUserEmail%"
     - git config --global user.name "%GitHubUserName%"
+    - ps: "$headers = if($env:APPVEYOR_PULL_REQUEST_NUMBER){\n @{\n  \"Authorization\" = \"Basic $env:GitRestAuth\"\n  \"Content-type\" = \"application/json\"\n}\n\n$pr = Invoke-RestMethod -Uri \"https://api.github.com/repos/nanoframework/nf-interpreter/pulls/$env:APPVEYOR_PULL_REQUEST_NUMBER\" -Headers $headers  -Method GET\n\nif($pr.user.login -eq \"nfbot\" -and $pr.body -match \"\\[version update\\]\")\n{\n    # commit was from nfbot AND it's taged as a [version update]\n    # OK to skip AppVeyor build \n    \"Version update only. Skipping build.\" | Write-Host -BackgroundColor White -ForegroundColor Blue\n    Exit-AppveyorBuild\n} }\n"
 
   configuration:
     - MinSizeRel
 
   environment:
     APPVEYOR_SAVE_CACHE_ON_ERROR: true
-    GNU_GCC_TOOLCHAIN_PATH: 'C:\GNU_Tools_ARM_Embedded\7-2017-q4-major'
+    GNU_GCC_TOOLCHAIN_PATH: 'C:\GNU_Tools_ARM_Embedded'
     ESP32_TOOLCHAIN_PATH: 'C:\ESP32_Tools\1.22.0-80'
     NINJA_PATH: 'C:\mytools\ninja'
     HEX2DFU_PATH: 'C:\mytools\hex2dfu'
     ESP32_TOOLS_PATH: 'C:/ESP32_TOOLS'
-    ESP32_LIBS_PATH: '%ESP32_TOOLS_PATH%/libs-v3.0'
-    ESP32_IDF_PATH: '%ESP32_TOOLS_PATH%/esp-idf-v3.0'
+    ESP32_LIBS_PATH: '%ESP32_TOOLS_PATH%/libs-v3.1'
+    ESP32_IDF_PATH: '%ESP32_TOOLS_PATH%/esp-idf-v3.1'
     BOARD_NAME: ''
     BUILD_OPTIONS: ''
     NEEDS_DFU: 'False'
@@ -331,16 +352,18 @@
     GitHubUserName:
       secure: 7OBtVAMTodMWK20wg6pGnQ==
     GitHubUserEmail:
-      secure: HeABB68Sn/Lhbd69C2cUcfWv0ab/rMDEcOLvcxf8gGw=
+      secure: /NpmL1KqwHyHFnF0GlUovA586wDIt8Hg/Q8Dro6kUpk=
     GitHubToken:
-      secure: WOqlCsnwTzfDPJFoNV/h8mEESIpG/9uFn1u6oE8hGZtXwIQQlsY+NyyLt9Y5xoFn
+      secure: i/2hGsqVMwzdM5yIS4rxOIeG3ftx7su7klWYN80s/fHvgk7A5H2fF3oUTNLcyTbw
+    GitRestAuth:
+      secure: E3bCMe4LtDdAhHSYRcLp0N6DixJe1m8TNxhYeJW/GnqM3WXdRqsgkHSbwootPjJQtOQJrps4twmzTVzofLSVgPgbzU8PxU0AkJV7zwkyVOE=
     BinTrayKey:
       secure: Wz0wwFOzMkDwwzzax1HPzKZB3r/aTprlleqFYX5arxpH9pP3D9glINxEuY+P/BaN
 
     matrix:
       - BOARD_NAME: 'STM32'
       - BOARD_NAME: 'ESP32_DEVKITC'
-        BUILD_OPTIONS: '-DTARGET_SERIES=ESP32 -DRTOS=FREERTOS -DNF_WP_IMPLEMENTS_CRC32=OFF -DNF_FEATURE_DEBUGGER=ON -DNF_FEATURE_RTC=ON -DAPI_Windows.Devices.Gpio=ON -DAPI_Windows.Devices.Spi=ON -DAPI_Windows.Devices.I2c=ON -DAPI_Windows.Devices.Pwm=ON -DAPI_Windows.Devices.SerialCommunication=ON -DAPI_Windows.Devices.Adc=ON -DAPI_System.Net=ON -DAPI_Windows.Devices.Wifi=ON -DNF_SECURITY_OPENSSL=ON -DAPI_Hardware.Esp32=ON'
+        BUILD_OPTIONS: '-DTARGET_SERIES=ESP32 -DRTOS=FREERTOS -DNF_WP_IMPLEMENTS_CRC32=OFF -DNF_FEATURE_DEBUGGER=ON -DNF_FEATURE_RTC=ON -DAPI_Windows.Devices.Gpio=ON -DAPI_Windows.Devices.Spi=ON -DAPI_Windows.Devices.I2c=ON -DAPI_Windows.Devices.Pwm=ON -DAPI_Windows.Devices.SerialCommunication=ON -DAPI_Windows.Devices.Adc=ON -DAPI_System.Net=ON -DAPI_Windows.Devices.Wifi=ON -DNF_SECURITY_OPENSSL=ON -DAPI_Hardware.Esp32=ON -DSUPPORT_ANY_BASE_CONVERSION=ON'
       - BOARD_NAME: 'NANOCLR_WINDOWS'
 
   matrix:
@@ -450,14 +473,22 @@
 
             Copy-Item -Path $env:ESP32_LIBS_PATH\bootloader.bin -Destination bootloader.bin
             Compress-7Zip -Path . -Filter "*.bin" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion
+            Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
 
             # upload package only if this not a PR 
             # and this is 'develop' (not develop-something)
             if(!$env:APPVEYOR_PULL_REQUEST_NUMBER -and $env:APPVEYOR_REPO_BRANCH -eq "develop")
             {
-              $webClient = New-Object System.Net.WebClient
-              $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-              $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+              try
+              {
+                $webClient = New-Object System.Net.WebClient
+                $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+              }
+              catch
+              {
+                & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+              }
             }
           }
           Else
@@ -481,14 +512,22 @@
               {
                 Compress-7Zip -Path . -Filter "*.dfu" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion -Append
               }
+              Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
 
               # upload package only if this not a PR 
               # and this is 'develop' (not develop-something)
               if(!$env:APPVEYOR_PULL_REQUEST_NUMBER -and $env:APPVEYOR_REPO_BRANCH -eq "develop")
               {
-                $webClient = New-Object System.Net.WebClient
-                $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-                $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                try
+                {
+                  $webClient = New-Object System.Net.WebClient
+                  $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                  $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                }
+                catch
+                {
+                  & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+                }
               }
             }
             else
@@ -528,14 +567,22 @@
                 {
                   Compress-7Zip -Path . -Filter "*.dfu" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion -Append
                 }
-                
+                Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
+
                 # upload package only if this not a PR 
                 # and this is 'develop' (not develop-something)
                 if(!$env:APPVEYOR_PULL_REQUEST_NUMBER -and $env:APPVEYOR_REPO_BRANCH -eq "develop")
                 {
-                  $webClient = New-Object System.Net.WebClient
-                  $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-                  $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                  try
+                  {
+                    $webClient = New-Object System.Net.WebClient
+                    $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                    $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                  }
+                  catch
+                  {
+                    & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+                  }
                 }
 
                 cd ..
@@ -549,18 +596,9 @@
 
   # requires APPVEYOR_DISCORD_WEBHOOK_URL enviroment variable set with Discord webhook URL
   on_failure:
-  - ps: |
-
-        cd ..
-
-        .\appveyor-discord.ps1 failure $env:APPVEYOR_DISCORD_WEBHOOK_URL
+  - ps: $env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 failure $env:APPVEYOR_DISCORD_WEBHOOK_URL
 
   test: off
-
-  artifacts:
-    - path: '**\*.zip'
-      name: nanoImage
-
 
   # before_deploy:
   #   # need this to keep ruby happy
@@ -601,20 +639,21 @@
     - git config --global credential.helper store
     - ps: Add-Content "$env:USERPROFILE\.git-credentials" "https://$($env:GitHubToken):x-oauth-basic@github.com`n"
     - git config --global user.email "%GitHubUserEmail%"
-    - git config --global user.name "%GitHubUserName%"
+    - git config --global user.name "%GitHubUserName%" 
+    - ps: "$headers = if($env:APPVEYOR_PULL_REQUEST_NUMBER){\n @{\n  \"Authorization\" = \"Basic $env:GitRestAuth\"\n  \"Content-type\" = \"application/json\"\n}\n\n$pr = Invoke-RestMethod -Uri \"https://api.github.com/repos/nanoframework/nf-interpreter/pulls/$env:APPVEYOR_PULL_REQUEST_NUMBER\" -Headers $headers  -Method GET\n\nif($pr.user.login -eq \"nfbot\" -and $pr.body -match \"\\[version update\\]\")\n{\n    # commit was from nfbot AND it's taged as a [version update]\n    # OK to skip AppVeyor build \n    \"Version update only. Skipping build.\" | Write-Host -BackgroundColor White -ForegroundColor Blue\n    Exit-AppveyorBuild\n} }\n"
 
   configuration:
     - MinSizeRel
 
   environment:
     APPVEYOR_SAVE_CACHE_ON_ERROR: true
-    GNU_GCC_TOOLCHAIN_PATH: 'C:\GNU_Tools_ARM_Embedded\7-2017-q4-major'
+    GNU_GCC_TOOLCHAIN_PATH: 'C:\GNU_Tools_ARM_Embedded'
     ESP32_TOOLCHAIN_PATH: 'C:\ESP32_Tools\1.22.0-80'
     NINJA_PATH: 'C:\mytools\ninja'
     HEX2DFU_PATH: 'C:\mytools\hex2dfu'
     ESP32_TOOLS_PATH: 'C:\ESP32_TOOLS'
-    ESP32_LIBS_PATH: '%ESP32_TOOLS_PATH%\libs-v3.0'
-    ESP32_IDF_PATH: '%ESP32_TOOLS_PATH%\esp-idf-v3.0'
+    ESP32_LIBS_PATH: '%ESP32_TOOLS_PATH%\libs-v3.1'
+    ESP32_IDF_PATH: '%ESP32_TOOLS_PATH%\esp-idf-v3.1'
     BOARD_NAME: ''
     BUILD_OPTIONS: ''
     NEEDS_DFU: 'False'
@@ -622,16 +661,18 @@
     GitHubUserName:
       secure: 7OBtVAMTodMWK20wg6pGnQ==
     GitHubUserEmail:
-      secure: HeABB68Sn/Lhbd69C2cUcfWv0ab/rMDEcOLvcxf8gGw=
+      secure: /NpmL1KqwHyHFnF0GlUovA586wDIt8Hg/Q8Dro6kUpk=
     GitHubToken:
-      secure: WOqlCsnwTzfDPJFoNV/h8mEESIpG/9uFn1u6oE8hGZtXwIQQlsY+NyyLt9Y5xoFn
+      secure: i/2hGsqVMwzdM5yIS4rxOIeG3ftx7su7klWYN80s/fHvgk7A5H2fF3oUTNLcyTbw
+    GitRestAuth:
+      secure: E3bCMe4LtDdAhHSYRcLp0N6DixJe1m8TNxhYeJW/GnqM3WXdRqsgkHSbwootPjJQtOQJrps4twmzTVzofLSVgPgbzU8PxU0AkJV7zwkyVOE=
     BinTrayKey:
       secure: Wz0wwFOzMkDwwzzax1HPzKZB3r/aTprlleqFYX5arxpH9pP3D9glINxEuY+P/BaN
 
     matrix:
       - BOARD_NAME: 'STM32'
       - BOARD_NAME: 'ESP32_DEVKITC'
-        BUILD_OPTIONS: '-DTARGET_SERIES=ESP32 -DRTOS=FREERTOS -DNF_WP_IMPLEMENTS_CRC32=OFF -DNF_FEATURE_DEBUGGER=ON -DNF_FEATURE_RTC=ON -DAPI_Windows.Devices.Gpio=ON -DAPI_Windows.Devices.Spi=ON -DAPI_Windows.Devices.I2c=ON -DAPI_Windows.Devices.Pwm=ON -DAPI_Windows.Devices.SerialCommunication=ON -DAPI_Windows.Devices.Adc=ON -DAPI_System.Net=ON -DAPI_Windows.Devices.Wifi=ON -DNF_SECURITY_OPENSSL=ON -DAPI_Hardware.Esp32=ON'
+        BUILD_OPTIONS: '-DTARGET_SERIES=ESP32 -DRTOS=FREERTOS -DNF_WP_IMPLEMENTS_CRC32=OFF -DNF_FEATURE_DEBUGGER=ON -DNF_FEATURE_RTC=ON -DAPI_Windows.Devices.Gpio=ON -DAPI_Windows.Devices.Spi=ON -DAPI_Windows.Devices.I2c=ON -DAPI_Windows.Devices.Pwm=ON -DAPI_Windows.Devices.SerialCommunication=ON -DAPI_Windows.Devices.Adc=ON -DAPI_System.Net=ON -DAPI_Windows.Devices.Wifi=ON -DNF_SECURITY_OPENSSL=ON -DAPI_Hardware.Esp32=ON -DSUPPORT_ANY_BASE_CONVERSION=ON'
 
   matrix:
     fast_finish: true
@@ -739,13 +780,21 @@
 
             Copy-Item -Path $env:ESP32_LIBS_PATH\bootloader.bin -Destination bootloader.bin
             Compress-7Zip -Path . -Filter "*.bin" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion
+            Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
 
             #upload package only if this not a PR
             if(!$env:APPVEYOR_PULL_REQUEST_NUMBER)
             {
-              $webClient = New-Object System.Net.WebClient
-              $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-              $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+              try
+              {
+                $webClient = New-Object System.Net.WebClient
+                $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+              }
+              catch
+              {
+                & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+              }
             }
           }
           Else
@@ -769,13 +818,21 @@
               {
                 Compress-7Zip -Path . -Filter "*.dfu" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion -Append
               }
+              Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
 
               #upload package only if this not a PR
               if(!$env:APPVEYOR_PULL_REQUEST_NUMBER)
               {
-                $webClient = New-Object System.Net.WebClient
-                $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-                $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                try
+                {
+                  $webClient = New-Object System.Net.WebClient
+                  $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                  $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                }
+                catch
+                {
+                  & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+                }
               }
             }
             else
@@ -815,13 +872,21 @@
                 {
                   Compress-7Zip -Path . -Filter "*.dfu" -ArchiveFileName $env:BOARD_NAME-$env:GitVersion_SemVer.zip -DisableRecursion -Append
                 }
-                
+                Push-AppveyorArtifact $env:BOARD_NAME-$env:GitVersion_SemVer.zip
+
                 #upload package only if this not a PR
                 if(!$env:APPVEYOR_PULL_REQUEST_NUMBER)
                 {
-                  $webClient = New-Object System.Net.WebClient
-                  $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
-                  $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                  try
+                  {
+                    $webClient = New-Object System.Net.WebClient
+                    $webClient.Credentials = new-object System.Net.NetworkCredential("nfbot", $env:BinTrayKey)
+                    $webClient.UploadFile("https://api.bintray.com/content/nfbot/nanoframework-images-dev/$env:BOARD_NAME/$env:GitVersion_SemVer/$env:BOARD_NAME-$env:GitVersion_SemVer.zip;publish=1", "PUT", "$env:APPVEYOR_BUILD_FOLDER\build\$env:BOARD_NAME-$env:GitVersion_SemVer.zip")
+                  }
+                  catch
+                  {
+                    & "$env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 warning $env:APPVEYOR_DISCORD_WEBHOOK_URL 'Failed to upload package for $env:BOARD_NAME.'"
+                  }
                 }
 
                 cd ..
@@ -835,17 +900,9 @@
 
   # requires APPVEYOR_DISCORD_WEBHOOK_URL enviroment variable set with Discord webhook URL 
   on_failure:
-  - ps: |
-
-        cd ..
-
-        .\appveyor-discord.ps1 failure $env:APPVEYOR_DISCORD_WEBHOOK_URL
+  - ps: $env:APPVEYOR_BUILD_FOLDER\appveyor-discord.ps1 failure $env:APPVEYOR_DISCORD_WEBHOOK_URL
 
   test: off
-
-  artifacts:
-    - path: '**\*.zip'
-      name: nanoImage
 
   # before_deploy:
   #   # need this to keep ruby happy
